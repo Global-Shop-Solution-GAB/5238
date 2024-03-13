@@ -1,0 +1,766 @@
+Program.Sub.ScreenSU.Start
+Gui.FormInsufficient..Create
+Gui.FormInsufficient..Caption("Insufficient Inventory")
+Gui.FormInsufficient..Size(7935,3645)
+Gui.FormInsufficient..MinX(0)
+Gui.FormInsufficient..MinY(0)
+Gui.FormInsufficient..Position(0,0)
+Gui.FormInsufficient..AlwaysOnTop(True)
+Gui.FormInsufficient..BackColor(-2147483633)
+Gui.FormInsufficient..MinButton(False)
+Gui.FormInsufficient..MousePointer(0)
+Gui.FormInsufficient..Event(UnLoad,FormInsufficient_UnLoad)
+Gui.FormInsufficient.lstMessage.Create(ListBox)
+Gui.FormInsufficient.lstMessage.Size(7560,2790)
+Gui.FormInsufficient.lstMessage.Position(105,120)
+Gui.FormInsufficient.lstMessage.Anchor(15)
+Gui.FormInsufficient.cmdOkay.Create(Button)
+Gui.FormInsufficient.cmdOkay.Size(990,375)
+Gui.FormInsufficient.cmdOkay.Position(6675,2955)
+Gui.FormInsufficient.cmdOkay.Anchor(10)
+Gui.FormInsufficient.cmdOkay.Caption("Okay")
+Gui.FormInsufficient.cmdOkay.Event(Click,cmdOkay_Click)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+V.Global.sBackflush.Declare(String)
+V.Global.sBackflushWFG.Declare(String)
+V.Global.sOP.Declare(String)
+V.Global.bEnough.Declare(Boolean)
+V.Global.sFilter.Declare(String)
+V.Global.sMessage.Declare(String)
+V.Global.sIgnorePart.Declare(String)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'GCG_5238_BackflushInventoryCheck.g2u
+'Trey S
+'10/29/2018
+'For Mum Industries
+'This program will check if there is enough inventory to backflush when claiming pieces when either a user is updating multiple jobs, or a job where multiple users are clocked in is being updated
+'Modified 5/6/2019 to support checking WC Bin material instead of Inventory On hand
+'Modified 8/29/2019 they actually backflush from the WG bin if the WC is in a WG, accounting for that
+
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+V.Local.sJob.Declare(String)
+V.Local.iBDFRows.Declare(Long)
+V.Local.iCounter.Declare(Long)
+V.Local.bBackFlushAny.Declare(Boolean, False)
+V.Local.bBackFlushThis.Declare(Boolean, False)
+V.Local.sJobTemp.Declare(String)
+V.Local.sJobSuffixTemp.Declare(String)
+V.Local.sSeqTemp.Declare(String)
+V.Local.sOpcodeTemp.Declare(String)
+V.Local.sPass.Declare(String)
+V.Local.sSelectedTemp.Declare(String)
+V.Local.bInString.Declare(Boolean)
+V.Local.sBackflushJobs.Declare(String)
+
+'HOOKs
+'15810 - Update Jobs Button
+'15840 - Single Update Populate
+'15860 - Single Update Script 2
+'15910 - Multiple Update Populate
+'15916 - Multiple Update Script 1
+'15790 - Show Jobs / Exit Update Screen
+
+F.Intrinsic.Control.SelectCase(V.Caller.Hook)
+	
+	'Update Jobs button
+	F.Intrinsic.Control.Case(15810)
+		V.Passed.GLOBAL.Set("")
+		'Check BDF for backflush step, set GLOBAL if it is
+		F.Intrinsic.Control.CallSub(GetBackflushCodes)
+		F.Intrinsic.BDF.Load("bdfJobs", "AUX001")
+		F.Intrinsic.BDF.ReadRowCount("bdfJobs", V.Local.iBDFRows)
+		V.Local.iBDFRows.Set(V.Local.iBDFRows.--)
+		
+		F.Intrinsic.String.Build("{0}-{1}", V.Passed.009990.Trim, V.Passed.009991.Trim, V.Local.sJob)
+		
+		F.Intrinsic.Control.For(V.Local.iCounter, 0, V.Local.iBDFRows, 1)
+			F.Intrinsic.BDF.TextMatrix("bdfJobs", 3, V.Local.iCounter, V.Local.sOpcodeTemp)
+			
+			'If there's a backflush, set the any variable, and check if it's this specific job
+			F.Intrinsic.Control.If(V.Local.sOpcodeTemp.Trim, =, V.Global.sBackflush, or, V.Local.sOpcodeTemp.Trim, =, V.Global.sBackflushWFG)
+				F.Intrinsic.BDF.TextMatrix("bdfJobs", 9, V.Local.iCounter, V.Local.sSelectedTemp)
+				F.Intrinsic.BDF.TextMatrix("bdfJobs", 1, V.Local.iCounter, V.Local.sSeqTemp)
+				F.Intrinsic.BDF.TextMatrix("bdfJobs", 0, V.Local.iCounter, V.Local.sJobTemp)
+				'only mark multiple backflush if it's selected
+				F.Intrinsic.Control.If(V.Local.sSelectedTemp.Trim, =, "Y")
+					V.Local.sJobSuffixTemp.Redim(0,0)
+					F.Intrinsic.String.Split(V.Local.sJobTemp, "-", V.Local.sJobSuffixTemp)
+					F.Intrinsic.String.Build("{0},{1}*{2}*{3}", V.Local.sBackflushJobs, V.Local.sJobSuffixTemp(0).Trim, V.Local.sJobSuffixTemp(1).Trim, V.Local.sSeqTemp.Trim, V.Local.sBackflushJobs)
+					V.Local.bBackFlushAny.Set(True)
+				F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.If(V.Local.sJobTemp.Trim, =, V.Local.sJob, and, V.Local.sSeqTemp.Trim, =, V.Passed.009992.Trim)
+					V.Local.bBackFlushThis.Set(True)
+				F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Next(V.Local.iCounter)
+		
+		'Pass the results in the GABVAR to check in subsequent hooks
+		F.Intrinsic.String.TrimCharL(V.Local.sBackflushJobs, ",", V.Local.sBackflushJobs)
+		F.Intrinsic.String.Build("{0}-{1}-{2}", V.Local.bBackFlushAny, V.Local.bBackFlushThis, V.Local.sBackflushJobs, V.Local.sPass)
+		V.Passed.GLOBAL.Set(V.Local.sPass)
+		
+	'Single Update populate
+	F.Intrinsic.Control.Case(15840)
+		'Check if backflush step, if it is lock process button
+		'originally using script 1, that's what the commented code is, now using script 2
+		F.Intrinsic.String.IsInString(V.Passed.GLOBAL, "-", True, V.Local.bInString)
+		F.Intrinsic.Control.If(V.Local.bInString)
+			F.Intrinsic.String.Split(V.Passed.GLOBAL, "-", V.Local.sPass)
+			
+			'1 is bBackFlushThis
+			F.Intrinsic.Control.If(V.Local.sPass(1).Trim, =, "True")
+				F.Intrinsic.UI.Msgbox("There is backflusing on this step. You will need to use the Check Backflushing button before processing.")
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000099, "LOCK", 1)
+				'F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000048, "LOCK", 0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000049, "LOCK", 0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000099, "LOCK", 0)
+				'F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000048, "LOCK", 1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000049, "LOCK", 1)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Else
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000099, "LOCK", 0)
+			'F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000048, "LOCK", 1)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000049, "LOCK", 1)
+		F.Intrinsic.Control.EndIf
+		
+		'V.Passed.000048.Set("Check Backflushing")
+		V.Passed.000049.Set("Check Backflushing")
+		
+'	'single update script 1
+'	F.Intrinsic.Control.Case(15850)
+'		F.Intrinsic.Control.CallSub(LoadSingleJob)
+'		F.ODBC.Connection!Con.OpenCompanyConnection
+'		F.Intrinsic.Control.CallSub(LoadJobsInProcess)
+'		F.Intrinsic.Control.CallSub(CalculateMaterial)
+'		F.Intrinsic.Control.CallSub(GetInventoryQuantity)
+'		F.ODBC.Connection!Con.Close
+'		F.Intrinsic.Control.CallSub(Compare)
+'		F.Intrinsic.Control.CallSub(Message)
+
+	'single update script 2
+	F.Intrinsic.Control.Case(15860)
+		F.Intrinsic.Control.CallSub(LoadSingleJob)
+		F.ODBC.Connection!Con.OpenCompanyConnection
+		F.Intrinsic.Control.CallSub(LoadJobsInProcess)
+		F.Intrinsic.Control.CallSub(LoadWorkGroups)
+		F.Intrinsic.Control.CallSub(GetJobLocations)
+		F.Intrinsic.Control.CallSub(CalculateMaterial)
+		F.Intrinsic.Control.CallSub(GetInventoryQuantity)
+		F.ODBC.Connection!Con.Close
+		F.Intrinsic.Control.CallSub(Compare)
+		F.Intrinsic.Control.CallSub(Message)
+	
+	'multiple update populate
+	F.Intrinsic.Control.Case(15910)
+		'Check if backflush step, if it is lock process button
+		F.Intrinsic.String.IsInString(V.Passed.GLOBAL, "-", True, V.Local.bInString)
+		F.Intrinsic.Control.If(V.Local.bInString)
+			F.Intrinsic.String.Split(V.Passed.GLOBAL, "-", V.Local.sPass)
+			
+			'0 is bBackFlushAny
+			F.Intrinsic.Control.If(V.Local.sPass(0).Trim, =, "True")
+				F.Intrinsic.UI.Msgbox("There is backflusing on these steps. You will need to use the Check Backflushing button before processing.")
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000099, "LOCK", 1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000116, "LOCK", 0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000099, "LOCK", 0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000116, "LOCK", 1)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Else
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000099, "LOCK", 0)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000116, "LOCK", 1)
+		F.Intrinsic.Control.EndIf
+		
+		V.Passed.000116.Set("Check Backflushing")
+		
+	'Multiple Update script 1
+	F.Intrinsic.Control.Case(15916)
+
+		'Check all jobs
+		F.Intrinsic.Control.CallSub(BuildBackflushJobsTable)
+		F.Intrinsic.Control.CallSub(LoadBDFJobs)
+		F.ODBC.Connection!Con.OpenCompanyConnection
+		F.Intrinsic.Control.CallSub(LoadJobsInProcess)
+		F.Intrinsic.Control.CallSub(LoadWorkGroups)
+		F.Intrinsic.Control.CallSub(GetJobLocations)
+		F.Intrinsic.Control.CallSub(CalculateMaterial)
+		F.Intrinsic.Control.CallSub(GetInventoryQuantity)
+		F.ODBC.Connection!Con.Close
+		F.Intrinsic.Control.CallSub(Compare)
+		F.Intrinsic.Control.CallSub(Message)
+	
+	'Show jobs
+	F.Intrinsic.Control.Case(15790)
+		'exiting update jobs screen, clear GLOBAL
+		V.Passed.GLOBAL.Set("")
+	
+F.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.GetBackflushCodes.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'may need to get lots of settings here
+'401116-2 is Backflush and WIP 2 FG opcode
+'401121-1 is Backflush material sequences with opcode
+F.Global.General.ReadOption(401121, 1, "", 1, V.Global.sBackflush)
+F.Global.General.ReadOption(401116, 1, "", 2, V.Global.sBackflushWFG)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.GetBackflushCodes.End
+
+Program.Sub.BuildBackflushJobsTable.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'if multiple job, build a table of the jobs with backflushing from the GLOBAL variable
+V.Local.sTemp.Declare(String)
+V.Local.iCounter.Declare(Long)
+V.Local.sJobs.Declare(String)
+
+F.Intrinsic.String.Split(V.Passed.GLOBAL, "-", V.Local.sTemp)
+'2 is job list
+V.Local.sJobs.Set(V.Local.sTemp(2))
+
+F.Data.DataTable.Create("dtBackflushJobs", True)
+F.Data.DataTable.AddColumn("dtBackflushJobs", "JOB", "String")
+F.Data.DataTable.AddColumn("dtBackflushJobs", "SUFFIX", "String")
+F.Data.DataTable.AddColumn("dtBackflushJobs", "SEQ", "String")
+
+F.Intrinsic.String.Split(V.Local.sJobs, ",", V.Local.sJobs)
+
+V.Local.sTemp.Redim(0,0)
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.Local.sJobs.UBound, 1)
+	F.Intrinsic.String.Split(V.Local.sJobs(V.Local.iCounter), "*", V.Local.sTemp)
+	F.Data.DataTable.AddRow("dtBackflushJobs", "JOB", V.Local.sTemp(0).Trim, "SUFFIX", V.Local.sTemp(1).Trim, "SEQ", V.Local.sTemp(2).Trim)
+	V.Local.sTemp.Redim(0,0)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+F.Intrinsic.Control.If(V.DataTable.dtBackflushJobs.RowCount, =, 0)
+	V.Global.bEnough.Set(True)
+	F.Intrinsic.Control.CallSub(Message)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.BuildBackflushJobsTable.End
+
+Program.Sub.LoadSingleJob.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'add one job to the table, as opposed to LoadBDFJobs
+V.Local.sJobSuffix.Declare(String)
+V.Local.fTotal.Declare(Float)
+V.Local.sSeqTemp.Declare(String)
+
+F.Data.DataTable.Create("dtPieces", True)
+F.Data.DataTable.AddColumn("dtPieces", "JOB", "STRING")
+F.Data.DataTable.AddColumn("dtPieces", "SUFFIX", "STRING")
+F.Data.DataTable.AddColumn("dtPieces", "SEQ", "STRING")
+F.Data.DataTable.AddColumn("dtPieces", "PIECES", "FLOAT")
+F.Data.DataTable.AddColumn("dtPieces", "IN_PROCESS", "BOOLEAN")
+F.Data.DataTable.AddColumn("dtPieces", "WC_TEMP", "String")
+
+'000004 = JOB-SUFFIX
+'000005 = SEQ
+'000001 = GOOD
+'000002 = SCRAP
+'009996 = WC
+
+F.Intrinsic.Math.Add(V.Passed.000001, V.Passed.000002, V.Local.fTotal)
+F.Intrinsic.Control.If(V.Local.fTotal, !=, 0)
+	F.Intrinsic.String.Split(V.Passed.000004, "-", V.Local.sJobSuffix)
+	F.Intrinsic.String.Build("JOB = '{0}' and SUFFIX = '{1}'", V.Local.sJobSuffix(0).Trim, V.Local.sJobSuffix(1).Trim, V.Global.sFilter)
+	F.Intrinsic.String.LPad(V.Passed.000005.Trim, "0", 6, V.Local.sSeqTemp)
+	F.Data.DataTable.AddRow("dtPieces", "JOB",V.Local.sJobSuffix(0).Trim, "SUFFIX", V.Local.sJobSuffix(1).Trim, "PIECES", V.Local.fTotal, "SEQ", V.Local.sSeqTemp, "IN_PROCESS", False, "WC_TEMP", V.Passed.009996.Trim)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.DataTable.dtPieces.RowCount, =, 0)
+	V.Global.bEnough.Set(True)
+	F.Intrinsic.Control.CallSub(Message)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.LoadSingleJob.End
+
+Program.Sub.LoadBDFJobs.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'load the jobs from the multiple update BDF, as opposed to LoadSingleJob
+V.Local.iBDFRows.Declare(Long)
+V.Local.iCounter.Declare(Long)
+V.Local.sTemp.Declare(String)
+V.Local.fGood.Declare(Float)
+V.Local.fScrap.Declare(Float)
+V.Local.fTotal.Declare(Float)
+V.Local.sSQL.Declare(String)
+V.Local.sSeq.Declare(String)
+V.Local.sSelect.Declare(String)
+V.Local.iFilterCount.Declare(Long, 0)
+V.Local.sWC.Declare(String)
+
+F.Data.DataTable.Create("dtPieces", True)
+F.Data.DataTable.AddColumn("dtPieces", "JOB", "STRING")
+F.Data.DataTable.AddColumn("dtPieces", "SUFFIX", "STRING")
+F.Data.DataTable.AddColumn("dtPieces", "SEQ", "STRING")
+F.Data.DataTable.AddColumn("dtPieces", "PIECES", "FLOAT")
+F.Data.DataTable.AddColumn("dtPieces", "IN_PROCESS", "BOOLEAN")
+F.Data.DataTable.AddColumn("dtPieces", "WC_TEMP", "STRING")
+
+F.Intrinsic.BDF.Load("bdfJobs", "AUX001")
+F.Intrinsic.BDF.ReadRowCount("bdfJobs", V.Local.iBDFRows)
+V.Local.iBDFRows.Set(V.Local.iBDFRows.--)
+
+'Build job filter, build pieces table
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.Local.iBDFRows, 1)
+
+	F.Intrinsic.BDF.TextMatrix("bdfJobs", 0, V.Local.iCounter, V.Local.sTemp)
+	F.Intrinsic.BDF.TextMatrix("bdfJobs", 1, V.Local.iCounter, V.Local.sSeq)
+	F.Intrinsic.String.Split(V.Local.sTemp, "-", V.Local.sTemp)
+	
+	'If it's one of the backflushing jobs, put it in the filter and pieces table
+	F.Intrinsic.String.Build("JOB = '{0}' and SUFFIX = '{1}' and SEQ = '{2}'", V.Local.sTemp(0).Trim, V.Local.sTemp(1).Trim, V.Local.sSeq.Trim, V.Local.sSelect)
+	F.Data.DataTable.Select("dtBackflushJobs", V.Local.sSelect, V.Local.sSelect)
+	F.Intrinsic.Control.If(V.Local.sSelect.IsNotNoReturn)
+		
+		F.Intrinsic.BDF.TextMatrix("bdfJobs", 2, V.Local.iCounter, V.Local.fGood)
+		F.Intrinsic.BDF.TextMatrix("bdfJobs", 3, V.Local.iCounter, V.Local.fScrap)
+		F.Intrinsic.BDF.TextMatrix("bdfJobs", 4, V.Local.iCounter, V.Local.sWC)
+		F.Intrinsic.Math.Add(V.Local.fGood, V.Local.fScrap, V.Local.fTotal)
+		
+		F.Intrinsic.Control.If(V.Local.fTotal, !=, 0)
+			'build filter
+			F.Intrinsic.Control.If(V.Local.iFilterCount, =, 0)
+				F.Intrinsic.String.Build("JOB = '{0}' and SUFFIX = '{1}'", V.Local.sTemp(0).Trim, V.Local.sTemp(1).Trim, V.Global.sFilter)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.String.Build("{2} or JOB = '{0}' and SUFFIX = '{1}'", V.Local.sTemp(0).Trim, V.Local.sTemp(1).Trim, V.Global.sFilter, V.Global.sFilter)
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.Math.Add(V.Local.iFilterCount, 1, V.Local.iFilterCount)
+			
+			'build pieces table
+			F.Intrinsic.String.LPad(V.Local.sSeq, "0", 6, V.Local.sSeq)
+			F.Data.DataTable.AddRow("dtPieces", "JOB", V.Local.sTemp(0).Trim, "SUFFIX", V.Local.sTemp(1).Trim, "PIECES", V.Local.fTotal, "SEQ", V.Local.sSeq.Trim, "IN_PROCESS", False, "WC_TEMP", V.Local.sWC.Trim)
+		F.Intrinsic.Control.EndIf
+		
+	F.Intrinsic.Control.EndIf
+	V.Local.sTemp.Redim(0,0)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+F.Intrinsic.Control.If(V.DataTable.dtBackflushJobs.Exists)
+	F.Data.DataTable.Close("dtBackflushJobs")
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.DataTable.dtPieces.RowCount, =, 0)
+	V.Global.bEnough.Set(True)
+	F.Intrinsic.Control.CallSub(Message)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.LoadBDFJobs.End
+
+Program.Sub.LoadJobsInProcess.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'get jobs that have been updated but not processed yet from JOBS_IN_PROCESS
+V.Local.sSQL.Declare(String)
+V.Local.iCounter.Declare(Long)
+V.Local.dDate.Declare(Date)
+V.Local.iTotal.Declare(Long)
+V.Local.sFilterNoSEQ.Declare(String)
+V.Local.sSeqTemp.Declare(String)
+V.Local.sMaterialFilter.Declare(String)
+V.Local.sSelect.Declare(String)
+V.Local.bInString.Declare(Boolean)
+
+'only need ones where backflushing....
+F.Intrinsic.Control.CallSub(GetBackflushCodes)
+
+'get pieces from JOBS_IN_PROCESS
+F.Intrinsic.Date.DateAdd("D", -1, V.Ambient.Date, V.Local.dDate)
+F.Intrinsic.String.Build("select RTRIM(JOB) as JOB, RTRIM(SUFFIX) as SUFFIX, RTRIM(SEQUENCE) as SEQ, RTRIM(MACHINE) as WC_TEMP, PIECES_GOOD, PIECES_SCRAP from V_JOBS_IN_PROCESS where TEMP_LEAVE != 'Y' and SUFFIX_DATE >= '{0}' and (PIECES_GOOD != 0 or PIECES_SCRAP != 0)", V.Local.dDate.FormatYYYY-MM-DD, V.Local.sSQL)
+F.Data.DataTable.CreateFromSQL("dtJobsInProcess", "Con", V.Local.sSQL)
+
+'Add these to pieces table
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.DataTable.dtJobsInProcess.RowCount--, 1)
+	F.Intrinsic.Math.Add(V.DataTable.dtJobsInProcess(V.Local.iCounter).PIECES_GOOD!FieldVal, V.DataTable.dtJobsInProcess(V.Local.iCounter).PIECES_SCRAP!FieldVal, V.Local.iTotal)
+	F.Intrinsic.String.LPad(V.DataTable.dtJobsInProcess(V.Local.iCounter).SEQ!FieldValTrim, "0", 6, V.Local.sSeqTemp)
+	F.Data.DataTable.AddRow("dtPieces", "JOB", V.DataTable.dtJobsInProcess(V.Local.iCounter).JOB!FieldValTrim, "SUFFIX", V.DataTable.dtJobsInProcess(V.Local.iCounter).SUFFIX!FieldValTrim, "PIECES", V.Local.iTotal, "SEQ", V.Local.sSeqTemp, "IN_PROCESS", True, "WC_TEMP", V.DataTable.dtJobsInProcess(V.Local.iCounter).WC_TEMP!FieldValTrim)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+F.Data.DataTable.Close("dtJobsInProcess")
+
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.DataTable.dtPieces.RowCount--, 1)
+	F.Intrinsic.Control.If(V.Local.iCounter, =, 0)
+		F.Intrinsic.String.Build("JOB = '{0}' and SUFFIX = '{1}' and SEQ = '{2}'", V.DataTable.dtPieces(V.Local.iCounter).JOB!FieldValTrim, V.DataTable.dtPieces(V.Local.iCounter).SUFFIX!FieldValTrim, V.DataTable.dtPieces(V.Local.iCounter).SEQ!FieldValTrim, V.Global.sFilter)
+		F.Intrinsic.String.Build("JOB = '{0}' and SUFFIX = '{1}'", V.DataTable.dtPieces(V.Local.iCounter).JOB!FieldValTrim, V.DataTable.dtPieces(V.Local.iCounter).SUFFIX!FieldValTrim, V.Local.sFilterNoSEQ)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{2} or JOB = '{0}' and SUFFIX = '{1}' and SEQ = '{3}'", V.DataTable.dtPieces(V.Local.iCounter).JOB!FieldValTrim, V.DataTable.dtPieces(V.Local.iCounter).SUFFIX!FieldValTrim, V.Global.sFilter, V.DataTable.dtPieces(V.Local.iCounter).SEQ!FieldValTrim, V.Global.sFilter)
+		F.Intrinsic.String.Build("{2} or JOB = '{0}' and SUFFIX = '{1}'", V.DataTable.dtPieces(V.Local.iCounter).JOB!FieldValTrim, V.DataTable.dtPieces(V.Local.iCounter).SUFFIX!FieldValTrim, V.Local.sFilterNoSEQ, V.Local.sFilterNoSEQ)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+'Select the ones of these with backflushing
+F.Intrinsic.String.Build("select distinct RTRIM(JOB) as JOB, RTRIM(SUFFIX) as SUFFIX from V_JOB_OPERATIONS where (OPERATION = '{0}' or OPERATION = '{1}') and ({2})", V.Global.sBackflush.Trim, V.Global.sBackflushWFG.Trim, V.Global.sFilter, V.Local.sSQL)
+F.Data.DataTable.CreateFromSQL("dtInProcessBackflushing", "Con", V.Local.sSQL)
+
+F.Data.Linq.Join("LeftJoin", "DataTable", "dtInProcessBackflushing*!*A", "DataTable", "dtPieces*!*B", "A.Job = B.Job and A.Suffix = B.Suffix", "A.Job*!*A.Suffix*!*B.PIECES*!*B.IN_PROCESS*!*B.WC_TEMP", "", "", "", "dtPiecesBackflush", True)
+
+F.Data.DataTable.Close("dtPieces")
+F.Data.DataTable.Close("dtInProcessBackflushing")
+
+'Maybe split this up into two subs, this bottom half is more about getting the material than jobs in process
+F.Intrinsic.String.Build("select RTRIM(JOB) as JOB, RTRIM(SUFFIX) as SUFFIX, RTRIM(PART) as PART, UNITS from V_JOB_OPERATIONS where LMO = 'M' and PART != '' and UNITS != 0 and ({0})", V.Local.sFilterNoSEQ, V.Local.sSQL)
+F.Data.DataTable.CreateFromSQL("dtMaterialTemp", "Con", V.Local.sSQL, True)
+
+'I need to only use job in process material if it is also used by one of the non in process jobs
+F.Data.Linq.Join("RightJoin", "DataTable", "dtMaterialTemp*!*A", "DataTable", "dtPiecesBackflush*!*B", "A.Job = B.Job and A.Suffix = B.Suffix", "A.Job*!*A.Suffix*!*A.PART*!*A.UNITS*!*B.PIECES*!*B.IN_PROCESS*!*B.WC_TEMP", "", "", "", "dtMaterialTemp2", True)
+F.Data.DataView.Create("dtMaterialTemp2", "dvInProcess", 22, "IN_PROCESS = True", "")
+F.Data.DataView.Create("dtMaterialTemp2", "dvTemp", 22)
+
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.DataView.dtMaterialTemp2!dvInProcess.RowCount--, 1)
+	F.Intrinsic.String.Build("PART = '{0}' and IN_PROCESS = FALSE", V.DataView.dtMaterialTemp2!dvInProcess(V.Local.iCounter).Part!FieldValTrim, V.Local.sSelect)
+	F.Data.DataView.SetFilter("dtMaterialTemp2", "dvTemp", V.Local.sSelect)
+	
+	F.Intrinsic.Control.If(V.DataView.dtMaterialTemp2!dvTemp.RowCount, =, 0)
+		F.Intrinsic.String.IsInString(V.Global.sIgnorePart, "=", True, V.Local.bInString)
+		F.Intrinsic.Control.If(V.Local.bInString)
+			F.Intrinsic.String.Build("{0} and Part <> '{1}'", V.Global.sIgnorePart, V.DataView.dtMaterialTemp2!dvInProcess(V.Local.iCounter).Part!FieldValTrim, V.Global.sIgnorePart)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("Part <> '{0}'", V.DataView.dtMaterialTemp2!dvInProcess(V.Local.iCounter).Part!FieldValTrim, V.Global.sIgnorePart)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+F.Data.DataView.SetFilter("dtMaterialTemp2", "dvTemp", V.Global.sIgnorePart)
+F.Data.DataView.ToDataTable("dtMaterialTemp2", "dvTemp", "dtMaterial", True)
+F.Data.DataTable.Close("dtMaterialTemp2")
+
+F.Data.DataTable.AddExpressionColumn("dtMaterial", "NEEDED", "FLOAT", "UNITS * PIECES")
+F.Data.DataTable.Close("dtPiecesBackflush")
+F.Data.DataTable.Close("dtMaterialTemp")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.LoadJobsInProcess.End
+
+Program.Sub.LoadWorkGroups.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'if there is a WG, they use that as the bin, not the WC, so replacing that here
+F.Data.Dictionary.CreateFromSQL("dictWorkGroup", "Con", "select RTRIM(WORKCENTER), RTRIM(WORKGROUP) from V_WORKGROUP_LINE")
+F.Data.DataTable.AddColumn("dtMaterial", "WG", "String")
+F.Data.Dictionary.SetDefaultReturn("dictWorkGroup", "")
+F.Data.DataTable.FillFromDictionary("dtMaterial", "dictWorkGroup", "WC_TEMP", "WG")
+F.Data.Dictionary.Close("dictWorkGroup")
+
+F.Data.DataTable.AddExpressionColumn("dtMaterial", "WC", "String", "IIF([WG] = '', [WC_TEMP], [WG])")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.LoadWorkGroups.End
+
+Program.Sub.GetJobLocations.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+V.Local.iCounter.Declare(Long)
+V.Local.sFilter.Declare(String)
+V.Local.sSQL.Declare(String)
+
+'build job filter
+F.Intrinsic.Control.If(V.DataTable.dtMaterial.RowCount, >, 0)
+	F.Intrinsic.String.Build("JOB = '{0}' and SUFFIX = '{1}'", V.DataTable.dtMaterial(0).JOB!FieldValTrim, V.DataTable.dtMaterial(0).SUFFIX!FieldValTrim, V.Local.sFilter)
+	F.Intrinsic.Control.For(V.Local.iCounter, 1, V.DataTable.dtMaterial.RowCount--, 1)
+		F.Intrinsic.String.Build("{2} or JOB = '{0}' and SUFFIX = '{1}'", V.DataTable.dtMaterial(V.Local.iCounter).JOB!FieldValTrim, V.DataTable.dtMaterial(V.Local.iCounter).SUFFIX!FieldValTrim, V.Local.sFilter, V.Local.sFilter)
+	F.Intrinsic.Control.Next(V.Local.iCounter)
+	
+	F.Intrinsic.String.Build("select JOB + '-' + SUFFIX, RTRIM(LOCATION) as LOCATION from V_JOB_HEADER where ({0})", V.Local.sFilter, V.Local.sSQL)
+	F.Data.Dictionary.CreateFromSQL("dictLocation", "Con", V.Local.sSQL)
+	F.Data.Dictionary.SetDefaultReturn("dictLocation", "")
+	
+	F.Data.DataTable.AddExpressionColumn("dtMaterial", "JobSuff", "String", "Job + '-' + Suffix")
+	F.Data.DataTable.AddColumn("dtMaterial", "Location", "String")
+	F.Data.DataTable.FillFromDictionary("dtMaterial", "dictLocation", "JobSuff", "Location")
+	
+	F.Data.Dictionary.Close("dictLocation")
+F.Intrinsic.Control.Else
+	V.Global.bEnough.Set(True)
+	F.Intrinsic.Control.CallSub(Message)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.GetJobLocations.End
+
+Program.Sub.CalculateMaterial.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'compute material totals
+V.Local.iCounter.Declare(Long)
+V.Local.sFilter.Declare(String)
+V.Local.sParts.Declare(String)
+V.Local.bInString.Declare(Boolean)
+V.Local.iIndex.Declare(Long)
+V.Local.fTotal.Declare(Float)
+
+F.Data.DataTable.Create("dtMaterialTotals", True)
+F.Data.DataTable.AddColumn("dtMaterialTotals", "PART", "STRING")
+F.Data.DataTable.AddColumn("dtMaterialTotals", "LOC", "STRING")
+F.Data.DataTable.AddColumn("dtMaterialTotals", "AMOUNT", "FLOAT")
+F.Data.DataTable.AddColumn("dtMaterialTotals", "WC", "STRING")
+
+F.Data.DataView.Create("dtMaterial", "dvMaterial", 22)
+F.Data.DataView.ToDataTableDistinct("dtMaterial", "dvMaterial", "dtParts", "PART*!*LOCATION*!*WC")
+F.Data.DataView.Close("dtMaterial", "dvMaterial")
+
+'compute the totals for each part
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.DataTable.dtParts.RowCount--, 1)
+	F.Intrinsic.String.Build("PART = '{0}' and LOCATION = '{1}' and WC = '{2}'", V.DataTable.dtParts(V.Local.iCounter).Part!FieldValTrim, V.DataTable.dtParts(V.Local.iCounter).Location!FieldValTrim, V.DataTable.dtParts(V.Local.iCounter).WC!FieldValTrim, V.Local.sFilter)
+	F.Data.DataTable.Compute("dtMaterial", "Sum(NEEDED)", V.Local.sFilter, V.Local.fTotal)
+	F.Data.DataTable.AddRow("dtMaterialTotals", "PART", V.DataTable.dtParts(V.Local.iCounter).Part!FieldValTrim, "AMOUNT", V.Local.fTotal, "LOC", V.DataTable.dtParts(V.Local.iCounter).Location!FieldValTrim, "WC", V.DataTable.dtParts(V.Local.iCounter).WC!FieldValTrim)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.CalculateMaterial.End
+
+Program.Sub.GetInventoryQuantity.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'get onhand quantity from inventory
+V.Local.sFilter.Declare(String)
+V.Local.iCounter.Declare(Long)
+V.Local.sSQL.Declare(String)
+
+F.Intrinsic.Control.If(V.DataTable.dtMaterialTotals.RowCount, !=, 0)
+	'build part filter
+	F.Intrinsic.Control.For(V.Local.iCounter, 0, V.DataTable.dtMaterialTotals.RowCount--, 1)
+		F.Intrinsic.Control.If(V.Local.iCounter, =, V.DataTable.dtMaterialTotals.RowCount--)
+			F.Intrinsic.String.Build("{0} (Part = '{1}' and LOCATION = '{2}' and BIN = '{3}')", V.Local.sFilter, V.DataTable.dtMaterialTotals(V.Local.iCounter).PART!FieldValTrim, V.DataTable.dtMaterialTotals(V.Local.iCounter).LOC!FieldValTrim,  V.DataTable.dtMaterialTotals(V.Local.iCounter).WC!FieldValTrim, V.Local.sFilter)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0} (Part = '{1}' and LOCATION = '{2}' and BIN = '{3}') or", V.Local.sFilter, V.DataTable.dtMaterialTotals(V.Local.iCounter).PART!FieldValTrim, V.DataTable.dtMaterialTotals(V.Local.iCounter).LOC!FieldValTrim,  V.DataTable.dtMaterialTotals(V.Local.iCounter).WC!FieldValTrim, V.Local.sFilter)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Next(V.Local.iCounter)
+
+	'now select the quantities
+	F.Intrinsic.String.Build("select RTRIM(PART) as PART, RTRIM(LOCATION) as LOCATION,  QUANTITY as QTY_ONHAND, RTRIM(BIN) as WC from V_ITEM_MASTER where {0}", V.Local.sFilter, V.Local.sSQL)
+	F.Data.DataTable.CreateFromSQL("dtOnHand", "Con", V.Local.sSQL, True)
+F.Intrinsic.Control.Else
+	V.Global.bEnough.Set(True)
+	F.Intrinsic.Control.CallSub(Message)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.GetInventoryQuantity.End
+
+Program.Sub.Compare.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'Check if there is enough of each material, build message if there is not
+V.Local.iCounter.Declare(Long)
+V.Local.sPart.Declare(String)
+V.Local.sNeeded.Declare(String)
+V.Local.sTotalNeeded.Declare(String)
+V.Local.sOnHand.Declare(String)
+V.Local.sSelect.Declare(String)
+V.Local.bInString.Declare(Boolean)
+V.Local.iJ.Declare(Long)
+V.Local.sLoc.Declare(String)
+V.Local.sFromLoc.Declare(String)
+
+'compare needed to onhand
+F.Intrinsic.Control.If(V.DataTable.dtOnHand.Exists, =, True, and, V.DataTable.dtMaterialTotals.Exists, =, True)
+	
+	F.Data.DataTable.AddExpressionColumn("dtMaterialTotals", "PLW", "String", "[PART] + [LOC] + [WC]")
+	F.Data.DataTable.AddExpressionColumn("dtOnHand", "PLW", "String", "[PART] + [LOCATION] + [WC]")
+	
+	F.Data.Dictionary.CreateFromDataTable("dictOnHand", "dtOnHand", "PLW", "QTY_ONHAND")
+	F.Data.Dictionary.SetDefaultReturn("dictOnHand", 0)
+	F.Data.DataTable.AddColumn("dtMaterialTotals", "QTY_ONHAND", "FLOAT", 0)
+	F.Data.DataTable.FillFromDictionary("dtMaterialTotals", "dictOnHand", "PLW", "QTY_ONHAND")
+	F.Data.Dictionary.Close("dictOnHand")
+
+	F.Data.DataView.Create("dtMaterialTotals", "dvCompareTemp", 22, V.Global.sIgnorePart, "")
+	F.Data.DataView.ToDataTable("dtMaterialTotals", "dvCompareTemp", "dtCompare", True)
+	
+	F.Data.DataTable.SetValueFormat("dtCompare", -1, "QTY_ONHAND", "QTY_ONHAND", "##############0.00#######")
+	F.Data.DataTable.SetValueFormat("dtCompare", -1, "AMOUNT", "AMOUNT", "##############0.00#######")
+	
+	F.Data.DataTable.AddExpressionColumn("dtCompare", "ENOUGH", "BOOLEAN", "AMOUNT <= QTY_ONHAND")
+	F.Data.DataView.Create("dtCompare", "dvCompare", 22, "ENOUGH = FALSE and AMOUNT > 0", "")
+	F.Intrinsic.Control.If(V.DataView.dtCompare!dvCompare.RowCount, !=, 0)
+		V.Global.bEnough.Set(False)
+	F.Intrinsic.Control.Else
+		V.Global.bEnough.Set(True)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Else
+	V.Global.bEnough.Set(True)
+	F.Intrinsic.Control.CallSub(Message)
+F.Intrinsic.Control.EndIf
+
+'build message
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.DataView.dtCompare!dvCompare.RowCount--, 1)
+	V.Local.sPart.Set(V.DataView.dtCompare!dvCompare(V.Local.iCounter).Part!FieldValTrim)
+	V.Local.sLoc.Set(V.DataView.dtCompare!dvCompare(V.Local.iCounter).Loc!FieldValTrim)
+	V.Local.sTotalNeeded.Set(V.DataView.dtCompare!dvCompare(V.Local.iCounter).AMOUNT!FieldVal)
+	V.Local.sOnHand.Set(V.DataView.dtCompare!dvCompare(V.Local.iCounter).QTY_ONHAND!FieldVal)
+	
+	F.Intrinsic.String.Build("PART = '{0}' and LOCATION = '{1}'", V.Local.sPart, V.Local.sLoc, V.Local.sSelect)
+	F.Data.DataTable.Select("dtMaterial", V.Local.sSelect, V.Local.sSelect)
+	
+	F.Intrinsic.Control.If(V.Local.sSelect.IsNotNoReturn)
+		F.Intrinsic.String.IsInString(V.Local.sSelect, "*!*", True, V.Local.bInString)
+		F.Intrinsic.Control.If(V.Local.bInString)
+			F.Intrinsic.String.Split(V.Local.sSelect, "*!*", V.Local.sSelect)
+			
+			F.Intrinsic.Control.For(V.Local.iJ, 0, V.Local.sSelect.UBound, 1)
+				F.Intrinsic.Control.If(V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).NEEDED!FieldValFloat, !=, 0)
+					F.Intrinsic.Control.If(V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).Location!FieldValTrim, !=, "")
+						F.Intrinsic.String.Build(" from location {0}", V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).Location!FieldValTrim, V.Local.sFromLoc)
+					F.Intrinsic.Control.Else
+						V.Local.sFromLoc.Set("")
+					F.Intrinsic.Control.EndIf
+					F.Intrinsic.Control.If(V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).IN_PROCESS!FieldVal, !=, True)
+						F.Intrinsic.String.Build("{0}{1}{2} of part {3}{7} in bin {8} is needed for claiming {6} pieces on Job {4}-{5}", V.Global.sMessage, V.Ambient.NewLine, V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).NEEDED!FieldVal, V.Local.sPart, V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).JOB!FieldValTrim, V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).SUFFIX!FieldValTrim, V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).Pieces!FieldVal, V.Local.sFromLoc,  V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).WC!FieldValTrim, V.Global.sMessage)
+					F.Intrinsic.Control.Else
+						F.Intrinsic.String.Build("{0}{1}{2} of part {3}{7} is queued to be issued for previously claiming {6} pieces on Job {4}-{5}", V.Global.sMessage, V.Ambient.NewLine, V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).NEEDED!FieldVal, V.Local.sPart, V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).JOB!FieldValTrim, V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).SUFFIX!FieldValTrim, V.DataTable.dtMaterial(V.Local.sSelect(V.Local.iJ)).Pieces!FieldVal, V.Local.sFromLoc, V.Global.sMessage)
+					F.Intrinsic.Control.EndIf
+					
+					GUI.FormInsufficient.lstMessage.AddItem(V.Global.sMessage)
+					V.Global.sMessage.Set("")
+				F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.Next(V.Local.iJ)
+			
+			V.Local.sSelect.Redim(0,0)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.Control.If(V.DataTable.dtMaterial(V.Local.sSelect).NEEDED!FieldValFloat, !=, 0)
+				
+				F.Intrinsic.Control.If(V.DataTable.dtMaterial(V.Local.sSelect).Location!FieldValTrim, !=, "")
+						F.Intrinsic.String.Build(" from location {0}", V.DataTable.dtMaterial(V.Local.sSelect).Location!FieldValTrim, V.Local.sFromLoc)
+					F.Intrinsic.Control.Else
+						V.Local.sFromLoc.Set("")
+					F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.If(V.DataTable.dtMaterial(V.Local.sSelect).IN_PROCESS.FieldVal, !=, True)
+					F.Intrinsic.String.Build("{0}{1}{2} of part {3}{7} in bin {8} is needed for claiming {6} pieces on Job {4}-{5}.", V.Global.sMessage, V.Ambient.NewLine, V.DataTable.dtMaterial(V.Local.sSelect).NEEDED!FieldVal, V.Local.sPart, V.DataTable.dtMaterial(V.Local.sSelect).JOB!FieldValTrim, V.DataTable.dtMaterial(V.Local.sSelect).SUFFIX!FieldValTrim, V.DataTable.dtMaterial(V.Local.sSelect).Pieces!FieldVal, V.Local.sFromLoc, V.DataTable.dtMaterial(V.Local.sSelect).WC!FieldValTrim, V.Global.sMessage)
+				F.Intrinsic.Control.Else
+					F.Intrinsic.String.Build("{0}{1}{2} of part {3}{7} is queued to be issued for previously claiming {6} pieces on Job {4}-{5}", V.Global.sMessage, V.Ambient.NewLine, V.DataTable.dtMaterial(V.Local.sSelect).NEEDED!FieldVal, V.Local.sPart, V.DataTable.dtMaterial(V.Local.sSelect).JOB!FieldValTrim, V.DataTable.dtMaterial(V.Local.sSelect).SUFFIX!FieldValTrim, V.DataTable.dtMaterial(V.Local.sSelect).Pieces!FieldVal, V.Local.sFromLoc, V.Global.sMessage)
+				F.Intrinsic.Control.EndIf
+				
+				GUI.FormInsufficient.lstMessage.AddItem(V.Global.sMessage)
+				V.Global.sMessage.Set("")
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Build("{0}{1}	There is only {2} of the {3} needed of this part.", V.Global.sMessage, V.Ambient.NewLine, V.Local.sOnHand, V.Local.sTotalNeeded, V.Global.sMessage)
+	GUI.FormInsufficient.lstMessage.AddItem(V.Global.sMessage)
+	V.Global.sMessage.Set("")
+	GUI.FormInsufficient.lstMessage.AddItem(V.Global.sMessage)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+F.Data.DataView.Close("dtCompare", "dvCompare")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Compare.End
+
+Program.Sub.Message.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+'display the message if not enough, end the program
+F.Intrinsic.Control.If(V.Global.bEnough.Not)
+	GUI.FormInsufficient..Show
+F.Intrinsic.Control.Else
+	F.Intrinsic.UI.Msgbox("There is sufficient material to backflush.")
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000099, "LOCK", 0)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Message.End
+
+Program.Sub.cmdOkay_Click.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+GUI.FormInsufficient..Visible(False)
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdOkay_Click.End
+
+Program.Sub.FormInsufficient_UnLoad.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.FormInsufficient_UnLoad.End
